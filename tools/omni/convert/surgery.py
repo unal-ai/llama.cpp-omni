@@ -121,18 +121,18 @@ def main():
     print(f"  - VPM: {vpm_dir}")
     print(f"  - APM: {apm_dir}")
 
-    # 检查 safetensors 文件
+    checkpoint = None
+
+    # 优先走单文件 safetensors；若不存在则回退到 model.state_dict()（支持分片 checkpoint）。
     safetensors_path = os.path.join(args.model, "model.safetensors")
-    if not os.path.exists(safetensors_path):
-        raise FileNotFoundError(f"找不到 safetensors 文件: {safetensors_path}")
-    
-    print(f"\n正在加载 safetensors: {safetensors_path}")
-    file_size = os.path.getsize(safetensors_path) / 1024 / 1024 / 1024
-    print(f"  文件大小: {file_size:.2f} GB")
-    
-    # 加载 safetensors 文件
-    checkpoint = load_safetensors(safetensors_path)
-    print(f"  加载完成，共 {len(checkpoint)} 个张量")
+    if os.path.exists(safetensors_path):
+        print(f"\n正在加载 safetensors: {safetensors_path}")
+        file_size = os.path.getsize(safetensors_path) / 1024 / 1024 / 1024
+        print(f"  文件大小: {file_size:.2f} GB")
+        checkpoint = load_safetensors(safetensors_path)
+        print(f"  加载完成，共 {len(checkpoint)} 个张量")
+    else:
+        print(f"\n未找到单文件 model.safetensors，回退为 model.state_dict() 路径（支持分片模型）。")
 
     # 模型引入（使用 AutoModel，trust_remote_code=True 会自动加载模型目录中的代码）
     print(f"\n正在加载模型结构: {args.model}")
@@ -147,8 +147,11 @@ def main():
     processor.tokenizer = tokenizer
     model.processor = processor
 
-    # safetensors 文件已经包含权重，直接使用
-    print("权重已从 safetensors 加载")
+    if checkpoint is None:
+        checkpoint = model.state_dict()
+        print(f"  state_dict 加载完成，共 {len(checkpoint)} 个张量")
+    else:
+        print("权重已从 safetensors 加载")
 
     model.bfloat16()
     model.eval()

@@ -87,6 +87,53 @@ class Token2WavService:
                 log(f"CUDA_VISIBLE_DEVICES={cuda_visible}")
                 
                 import torch
+
+                # macOS/CPU fallback: some third-party code may hard-call .cuda().
+                if not torch.cuda.is_available():
+                    log("⚠️ CUDA not available. Monkey-patching .cuda() to use MPS or CPU.")
+
+                    target_device = "mps" if torch.backends.mps.is_available() else "cpu"
+                    log(f"Using fallback device: {target_device}")
+
+                    def custom_cuda(self, device=None):
+                        if target_device == "mps":
+                            if isinstance(self, torch.Tensor) and self.dtype == torch.float64:
+                                return self.float().to(target_device)
+                        return self.to(target_device)
+
+                    torch.nn.Module.cuda = custom_cuda
+                    torch.Tensor.cuda = custom_cuda
+
+                    device = target_device
+                    self.device = target_device
+
+                    # Workaround for environments where torchaudio backend is unavailable.
+                    try:
+                        import torchaudio
+                        import soundfile
+
+                        def replacement_load(uri, **kwargs):
+                            data, sr = soundfile.read(uri)
+                            tensor = torch.from_numpy(data)
+
+                            if tensor.ndim == 1:
+                                tensor = tensor.unsqueeze(1)
+
+                            # soundfile: [time, channels] -> torchaudio style: [channels, time]
+                            tensor = tensor.transpose(0, 1)
+
+                            if tensor.dtype != torch.float32:
+                                tensor = tensor.float()
+
+                            return tensor, sr
+
+                        torchaudio.load = replacement_load
+                        log("Monkey-patched torchaudio.load to use soundfile")
+                    except ImportError:
+                        log("Failed to patch torchaudio.load: soundfile not installed?")
+                    except Exception as e:
+                        log(f"Failed to patch torchaudio.load: {e}")
+
                 log(f"PyTorch CUDA available: {torch.cuda.is_available()}, device_count: {torch.cuda.device_count()}")
                 
                 from stepaudio2 import Token2wav
